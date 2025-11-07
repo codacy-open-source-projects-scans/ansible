@@ -182,16 +182,15 @@ RETURN = r"""#"""
 import os
 import re
 import tempfile
-from traceback import format_exc
 
-from ansible.module_utils.common.text.converters import to_text, to_bytes
+from ansible.module_utils.common.text.converters import to_text
 from ansible.module_utils.basic import AnsibleModule
 
 
-def write_changes(module, contents, path):
+def write_changes(module, contents, path, encoding='utf-8'):
 
     tmpfd, tmpfile = tempfile.mkstemp(dir=module.tmpdir)
-    with os.fdopen(tmpfd, 'wb') as f:
+    with os.fdopen(tmpfd, 'w', encoding=encoding) as f:
         f.write(contents)
 
     validate = module.params.get('validate', None)
@@ -255,11 +254,10 @@ def main():
         module.fail_json(rc=257, msg='Path %s does not exist !' % path)
     else:
         try:
-            with open(path, 'rb') as f:
-                contents = to_text(f.read(), errors='surrogate_or_strict', encoding=encoding)
-        except (OSError, IOError) as e:
-            module.fail_json(msg='Unable to read the contents of %s: %s' % (path, to_text(e)),
-                             exception=format_exc())
+            with open(path, 'r', encoding=encoding) as f:
+                contents = f.read()
+        except OSError as ex:
+            raise Exception(f"Unable to read the contents of {path!r}.") from ex
 
     pattern = u''
     if params['after'] and params['before']:
@@ -286,8 +284,7 @@ def main():
     try:
         result = re.subn(mre, params['replace'], section, 0)
     except re.error as e:
-        module.fail_json(msg="Unable to process replace due to error: %s" % to_text(e),
-                         exception=format_exc())
+        module.fail_json(msg="Unable to process replace due to error: %s" % to_text(e))
 
     if result[1] > 0 and section != result[0]:
         if pattern:
@@ -310,7 +307,7 @@ def main():
             res_args['backup_file'] = module.backup_local(path)
         # We should always follow symlinks so that we change the real file
         path = os.path.realpath(path)
-        write_changes(module, to_bytes(result[0], encoding=encoding), path)
+        write_changes(module, result[0], path, encoding=encoding)
 
     res_args['msg'], res_args['changed'] = check_file_attrs(module, changed, msg)
     module.exit_json(**res_args)

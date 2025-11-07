@@ -26,12 +26,11 @@ from ansible.module_utils.common.text.converters import to_text
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.plugins.loader import become_loader, connection_loader, shell_loader
 from ansible.playbook import Playbook
-from ansible.template import Templar
+from ansible._internal._templating._engine import TemplateEngine
 from ansible.utils.helpers import pct_to_int
 from ansible.utils.collection_loader import AnsibleCollectionConfig
 from ansible.utils.collection_loader._collection_finder import _get_collection_name_from_path, _get_collection_playbook_path
 from ansible.utils.path import makedirs_safe
-from ansible.utils.ssh_functions import set_default_transport
 from ansible.utils.display import Display
 
 
@@ -64,14 +63,6 @@ class PlaybookExecutor:
                 passwords=self.passwords,
                 forks=context.CLIARGS.get('forks'),
             )
-
-        # Note: We run this here to cache whether the default ansible ssh
-        # executable supports control persist.  Sometime in the future we may
-        # need to enhance this to check that ansible_ssh_executable specified
-        # in inventory is also cached.  We can't do this caching at the point
-        # where it is used (in task_executor) because that is post-fork and
-        # therefore would be discarded after every task.
-        set_default_transport()
 
     def run(self):
         """
@@ -132,7 +123,7 @@ class PlaybookExecutor:
 
                     # Allow variables to be used in vars_prompt fields.
                     all_vars = self._variable_manager.get_vars(play=play)
-                    templar = Templar(loader=self._loader, variables=all_vars)
+                    templar = TemplateEngine(loader=self._loader, variables=all_vars)
                     setattr(play, 'vars_prompt', templar.template(play.vars_prompt))
 
                     # FIXME: this should be a play 'sub object' like loop_control
@@ -158,7 +149,7 @@ class PlaybookExecutor:
 
                     # Post validate so any play level variables are templated
                     all_vars = self._variable_manager.get_vars(play=play)
-                    templar = Templar(loader=self._loader, variables=all_vars)
+                    templar = TemplateEngine(loader=self._loader, variables=all_vars)
                     play.post_validate(templar)
 
                     if context.CLIARGS['syntax']:

@@ -34,11 +34,12 @@ class PlaybookCLI(CLI):
 
     name = 'ansible-playbook'
 
+    USES_CONNECTION = True
+
     def init_parser(self):
 
         # create parser for CLI options
         super(PlaybookCLI, self).init_parser(
-            usage="%prog [options] playbook.yml [playbook2 ...]",
             desc="Runs Ansible playbooks, executing the defined tasks on the targeted hosts.")
 
         opt_help.add_connect_options(self.parser)

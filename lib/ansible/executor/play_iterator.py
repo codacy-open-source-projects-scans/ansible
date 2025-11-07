@@ -155,9 +155,6 @@ class PlayIterator:
         setup_block.run_once = False
         setup_task = Task(block=setup_block)
         setup_task.action = 'gather_facts'
-        # TODO: hardcoded resolution here, but should use actual resolution code in the end,
-        #       in case of 'legacy' mismatch
-        setup_task.resolved_action = 'ansible.builtin.gather_facts'
         setup_task.name = 'Gathering Facts'
         setup_task.args = {}
 
@@ -176,6 +173,27 @@ class PlayIterator:
         if self._play._included_conditional is not None:
             setup_task.when = self._play._included_conditional[:]
         setup_block.block = [setup_task]
+
+        validation_task = Task.load({
+            'name': f'Validating arguments against arg spec {self._play.validate_argspec}',
+            'action': 'ansible.builtin.validate_argument_spec',
+            'args': {
+                # 'provided_arguments': {},  # allow configuration via module_defaults
+                'argument_spec': self._play.argument_spec,
+                'validate_args_context': {
+                    'type': 'play',
+                    'name': self._play.validate_argspec,
+                    'argument_spec_name': self._play.validate_argspec,
+                    'path': self._play._metadata_path,
+                },
+            },
+            'tags': ['always'],
+        }, block=setup_block)
+
+        validation_task.set_loader(self._play._loader)
+        if self._play._included_conditional is not None:
+            validation_task.when = self._play._included_conditional[:]
+        setup_block.block.append(validation_task)
 
         setup_block = setup_block.filter_tagged_tasks(all_vars)
         self._blocks.append(setup_block)
@@ -255,7 +273,6 @@ class PlayIterator:
             self.set_state_for_host(host.name, s)
 
         display.debug("done getting next task for host %s" % host.name)
-        display.debug(" ^ task is: %s" % task)
         display.debug(" ^ state is: %s" % s)
         return (s, task)
 
@@ -275,35 +292,36 @@ class PlayIterator:
                 return (state, None)
 
             if state.run_state == IteratingStates.SETUP:
-                # First, we check to see if we were pending setup. If not, this is
-                # the first trip through IteratingStates.SETUP, so we set the pending_setup
-                # flag and try to determine if we do in fact want to gather facts for
-                # the specified host.
-                if not state.pending_setup:
-                    state.pending_setup = True
+                # First, we check to see if we completed both setup tasks injected
+                # during play compilation in __init__ above.
+                # If not, below we will determine if we do in fact want to gather
+                # facts or validate arguments for the specified host.
+                state.pending_setup = state.cur_regular_task < len(block.block)
+                if state.pending_setup:
+                    task = block.block[state.cur_regular_task]
 
                     # Gather facts if the default is 'smart' and we have not yet
                     # done it for this host; or if 'explicit' and the play sets
                     # gather_facts to True; or if 'implicit' and the play does
                     # NOT explicitly set gather_facts to False.
-
+                    gather_facts = bool(state.cur_regular_task == 0)
                     gathering = C.DEFAULT_GATHERING
                     implied = self._play.gather_facts is None or boolean(self._play.gather_facts, strict=False)
 
-                    if (gathering == 'implicit' and implied) or \
-                       (gathering == 'explicit' and boolean(self._play.gather_facts, strict=False)) or \
-                       (gathering == 'smart' and implied and not (self._variable_manager._fact_cache.get(host.name, {}).get('_ansible_facts_gathered', False))):
-                        # The setup block is always self._blocks[0], as we inject it
-                        # during the play compilation in __init__ above.
-                        setup_block = self._blocks[0]
-                        if setup_block.has_tasks() and len(setup_block.block) > 0:
-                            task = setup_block.block[0]
-                else:
-                    # This is the second trip through IteratingStates.SETUP, so we clear
-                    # the flag and move onto the next block in the list while setting
-                    # the run state to IteratingStates.TASKS
-                    state.pending_setup = False
+                    if gather_facts and not (
+                        (gathering == 'implicit' and implied) or
+                        (gathering == 'explicit' and boolean(self._play.gather_facts, strict=False)) or
+                        (gathering == 'smart' and implied and not self._variable_manager._facts_gathered_for_host(host.name))
+                    ):
+                        task = None
+                    elif not gather_facts and not self._play.validate_argspec:
+                        task = None
 
+                    state.cur_regular_task += 1
+                else:
+                    # This is the last trip through IteratingStates.SETUP, so we
+                    # move onto the next block in the list while setting the run
+                    # state to IteratingStates.TASKS
                     state.run_state = IteratingStates.TASKS
                     if not state.did_start_at_task:
                         state.cur_block += 1
@@ -450,8 +468,7 @@ class PlayIterator:
                 # skip implicit flush_handlers if there are no handlers notified
                 if (
                     task.implicit
-                    and task.action in C._ACTION_META
-                    and task.args.get('_raw_params', None) == 'flush_handlers'
+                    and task._get_meta() == 'flush_handlers'
                     and (
                         # the state store in the `state` variable could be a nested state,
                         # notifications are always stored in the top level state, get it here
@@ -579,7 +596,7 @@ class PlayIterator:
         Given the current HostState state, determines if the current block, or any child blocks,
         are in rescue mode.
         """
-        if state.run_state == IteratingStates.TASKS and state.get_current_block().rescue:
+        if state.run_state in (IteratingStates.TASKS, IteratingStates.HANDLERS) and state.get_current_block().rescue:
             return True
         if state.tasks_child_state is not None:
             return self.is_any_block_rescuing(state.tasks_child_state)
@@ -598,28 +615,22 @@ class PlayIterator:
             if state.tasks_child_state:
                 state.tasks_child_state = self._insert_tasks_into_state(state.tasks_child_state, task_list)
             else:
-                target_block = state._blocks[state.cur_block].copy()
-                before = target_block.block[:state.cur_regular_task]
-                after = target_block.block[state.cur_regular_task:]
-                target_block.block = before + task_list + after
+                target_block = state._blocks[state.cur_block].copy(exclude_tasks=True)
+                target_block.block[state.cur_regular_task:state.cur_regular_task] = task_list
                 state._blocks[state.cur_block] = target_block
         elif state.run_state == IteratingStates.RESCUE:
             if state.rescue_child_state:
                 state.rescue_child_state = self._insert_tasks_into_state(state.rescue_child_state, task_list)
             else:
-                target_block = state._blocks[state.cur_block].copy()
-                before = target_block.rescue[:state.cur_rescue_task]
-                after = target_block.rescue[state.cur_rescue_task:]
-                target_block.rescue = before + task_list + after
+                target_block = state._blocks[state.cur_block].copy(exclude_tasks=True)
+                target_block.rescue[state.cur_rescue_task:state.cur_rescue_task] = task_list
                 state._blocks[state.cur_block] = target_block
         elif state.run_state == IteratingStates.ALWAYS:
             if state.always_child_state:
                 state.always_child_state = self._insert_tasks_into_state(state.always_child_state, task_list)
             else:
-                target_block = state._blocks[state.cur_block].copy()
-                before = target_block.always[:state.cur_always_task]
-                after = target_block.always[state.cur_always_task:]
-                target_block.always = before + task_list + after
+                target_block = state._blocks[state.cur_block].copy(exclude_tasks=True)
+                target_block.always[state.cur_always_task:state.cur_always_task] = task_list
                 state._blocks[state.cur_block] = target_block
         elif state.run_state == IteratingStates.HANDLERS:
             state.handlers[state.cur_handlers_task:state.cur_handlers_task] = [h for b in task_list for h in b.block]

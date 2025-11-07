@@ -87,10 +87,11 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.common.text.converters import to_bytes
 from functools import partial
 from multiprocessing import dummy as threading
-from multiprocessing import TimeoutError
+from multiprocessing import TimeoutError, Lock
 
 
-COLLECTIONS_BUILD_AND_PUBLISH_TIMEOUT = 180
+COLLECTIONS_BUILD_AND_PUBLISH_TIMEOUT = 300
+LOCK = Lock()
 
 
 def publish_collection(module, collection):
@@ -155,12 +156,7 @@ def publish_collection(module, collection):
 
             # Extract the tarfile to sign the MANIFEST.json
             with tarfile.open(collection_path, mode='r') as collection_tar:
-                # deprecated: description='extractall fallback without filter' python_version='3.11'
-                # Replace 'tar_filter' with 'data_filter' and 'filter=tar' with 'filter=data' once Python 3.12 is minimum requirement.
-                if hasattr(tarfile, 'tar_filter'):
-                    collection_tar.extractall(path=os.path.join(collection_dir, '%s-%s-%s' % (namespace, name, version)), filter='tar')
-                else:
-                    collection_tar.extractall(path=os.path.join(collection_dir, '%s-%s-%s' % (namespace, name, version)))
+                collection_tar.extractall(path=os.path.join(collection_dir, '%s-%s-%s' % (namespace, name, version)), filter='data')
 
             manifest_path = os.path.join(collection_dir, '%s-%s-%s' % (namespace, name, version), 'MANIFEST.json')
             signature_path = os.path.join(module.params['signature_dir'], '%s-%s-%s-MANIFEST.json.asc' % (namespace, name, version))
@@ -174,7 +170,10 @@ def publish_collection(module, collection):
     if module.params['token']:
         publish_args.extend(['--token', module.params['token']])
 
-    rc, stdout, stderr = module.run_command(publish_args)
+    with LOCK:
+        # lock publish operations since Galaxy publish DB key generation is not mutex'd
+        rc, stdout, stderr = module.run_command(publish_args)
+
     result['publish'] = {
         'rc': rc,
         'stdout': stdout,
@@ -252,7 +251,7 @@ def run_module():
     start = datetime.datetime.now()
     result = dict(changed=True, results=[], start=str(start))
 
-    pool = threading.Pool(4)
+    pool = threading.Pool(1)
     publish_func = partial(publish_collection, module)
     try:
         result['results'] = pool.map_async(

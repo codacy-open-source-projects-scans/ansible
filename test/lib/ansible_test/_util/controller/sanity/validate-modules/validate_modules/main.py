@@ -72,7 +72,7 @@ from ansible.module_utils.compat.version import StrictVersion, LooseVersion
 from ansible.module_utils.basic import to_bytes
 from ansible.plugins.loader import fragment_loader
 from ansible.plugins.list import IGNORE as REJECTLIST
-from ansible.utils.plugin_docs import add_collection_to_versions_and_dates, add_fragments, get_docstring
+from ansible.utils.plugin_docs import AnsibleFragmentError, add_collection_to_versions_and_dates, add_fragments, get_docstring
 from ansible.utils.version import SemanticVersion
 
 from .module_args import AnsibleModuleImportError, AnsibleModuleNotInitialized, get_py_argument_spec, get_ps_argument_spec
@@ -687,30 +687,57 @@ class ModuleValidator(Validator):
         # get module list for each
         # check "shape" of each module name
 
-        module_requires = r'(?im)^#\s*requires\s+\-module(?:s?)\s*(Ansible\.ModuleUtils\..+)'
-        csharp_requires = r'(?im)^#\s*ansiblerequires\s+\-csharputil\s*(Ansible\..+)'
+        legacy_ps_requires = r'(?im)^#\s*Requires\s+\-Module(?:s?)\s+(Ansible\.ModuleUtils\..+)'
+        ps_requires = r"""(?imx)
+            ^\#\s*AnsibleRequires\s+-PowerShell\s+
+            (
+                # Builtin PowerShell module
+                (Ansible\.ModuleUtils\.[\w\.]+)
+                |
+                # Fully qualified collection PowerShell module
+                (ansible_collections\.\w+\.\w+\.plugins\.module_utils\.[\w\.]+)
+                |
+                # Relative collection PowerShell module
+                (\.[\w\.]+)
+            )
+            (\s+-Optional)?"""
+        csharp_requires = r"""(?imx)
+            ^\#\s*AnsibleRequires\s+-CSharpUtil\s+
+            (
+                # Builtin C# util
+                (Ansible\.[\w\.]+)
+                |
+                # Fully qualified collection C# util
+                (ansible_collections\.\w+\.\w+\.plugins\.module_utils\.[\w\.]+)
+                |
+                # Relative collection C# util
+                (\.[\w\.]+)
+            )
+            (\s+-Optional)?"""
+
         found_requires = False
 
-        for req_stmt in re.finditer(module_requires, self.text):
-            found_requires = True
-            # this will bomb on dictionary format - "don't do that"
-            module_list = [x.strip() for x in req_stmt.group(1).split(',')]
-            if len(module_list) > 1:
-                self.reporter.error(
-                    path=self.object_path,
-                    code='multiple-utils-per-requires',
-                    msg='Ansible.ModuleUtils requirements do not support multiple modules per statement: "%s"' % req_stmt.group(0)
-                )
-                continue
+        for pattern, required_type in [(legacy_ps_requires, "Requires"), (ps_requires, "AnsibleRequires")]:
+            for req_stmt in re.finditer(pattern, self.text):
+                found_requires = True
+                # this will bomb on dictionary format - "don't do that"
+                module_list = [x.strip() for x in req_stmt.group(1).split(',')]
+                if len(module_list) > 1:
+                    self.reporter.error(
+                        path=self.object_path,
+                        code='multiple-utils-per-requires',
+                        msg='Ansible.ModuleUtils requirements do not support multiple modules per statement: "%s"' % req_stmt.group(0)
+                    )
+                    continue
 
-            module_name = module_list[0]
+                module_name = module_list[0]
 
-            if module_name.lower().endswith('.psm1'):
-                self.reporter.error(
-                    path=self.object_path,
-                    code='invalid-requires-extension',
-                    msg='Module #Requires should not end in .psm1: "%s"' % module_name
-                )
+                if module_name.lower().endswith('.psm1'):
+                    self.reporter.error(
+                        path=self.object_path,
+                        code='invalid-requires-extension',
+                        msg='Module #%s should not end in .psm1: "%s"' % (required_type, module_name)
+                    )
 
         for req_stmt in re.finditer(csharp_requires, self.text):
             found_requires = True
@@ -976,21 +1003,15 @@ class ModuleValidator(Validator):
             add_collection_to_versions_and_dates(doc, self.collection_name,
                                                  is_module=self.plugin_type == 'module')
 
-            missing_fragment = False
             with CaptureStd():
                 try:
-                    get_docstring(self.path, fragment_loader=fragment_loader,
+                    get_docstring(os.path.abspath(self.path), fragment_loader=fragment_loader,
                                   verbose=True,
                                   collection_name=self.collection_name,
                                   plugin_type=self.plugin_type)
-                except AssertionError:
-                    fragment = doc['extends_documentation_fragment']
-                    self.reporter.error(
-                        path=self.object_path,
-                        code='missing-doc-fragment',
-                        msg='DOCUMENTATION fragment missing: %s' % fragment
-                    )
-                    missing_fragment = True
+                except AnsibleFragmentError:
+                    # Will be re-triggered below when explicitly calling add_fragments()
+                    pass
                 except Exception as e:
                     self.reporter.trace(
                         path=self.object_path,
@@ -1002,9 +1023,16 @@ class ModuleValidator(Validator):
                         msg='Unknown DOCUMENTATION error, see TRACE: %s' % e
                     )
 
-            if not missing_fragment:
-                add_fragments(doc, self.object_path, fragment_loader=fragment_loader,
-                              is_module=self.plugin_type == 'module')
+            try:
+                add_fragments(doc, os.path.abspath(self.object_path), fragment_loader=fragment_loader,
+                              is_module=self.plugin_type == 'module', section='DOCUMENTATION')
+            except AnsibleFragmentError as exc:
+                error = str(exc).replace(os.path.abspath(self.object_path), self.object_path)
+                self.reporter.error(
+                    path=self.object_path,
+                    code='doc-fragment-error',
+                    msg=f'Error while adding fragments: {error}'
+                )
 
             if 'options' in doc and doc['options'] is None:
                 self.reporter.error(
@@ -1103,6 +1131,16 @@ class ModuleValidator(Validator):
                     self.collection_name,
                     is_module=self.plugin_type == 'module',
                     return_docs=True)
+                try:
+                    add_fragments(returns, os.path.abspath(self.object_path), fragment_loader=fragment_loader,
+                                  is_module=self.plugin_type == 'module', section='RETURN')
+                except AnsibleFragmentError as exc:
+                    error = str(exc).replace(os.path.abspath(self.object_path), self.object_path)
+                    self.reporter.error(
+                        path=self.object_path,
+                        code='return-fragment-error',
+                        msg=f'Error while adding fragments: {error}'
+                    )
             self._validate_docs_schema(
                 returns,
                 return_schema(for_collection=bool(self.collection), plugin_type=self.plugin_type),
@@ -1241,16 +1279,18 @@ class ModuleValidator(Validator):
         if not isinstance(options, dict):
             return
         for key, value in options.items():
-            self._validate_semantic_markup(value.get('description'))
-            self._validate_semantic_markup_options(value.get('suboptions'))
+            if isinstance(value, dict):
+                self._validate_semantic_markup(value.get('description'))
+                self._validate_semantic_markup_options(value.get('suboptions'))
 
     def _validate_semantic_markup_return_values(self, return_vars):
         if not isinstance(return_vars, dict):
             return
         for key, value in return_vars.items():
-            self._validate_semantic_markup(value.get('description'))
-            self._validate_semantic_markup(value.get('returned'))
-            self._validate_semantic_markup_return_values(value.get('contains'))
+            if isinstance(value, dict):
+                self._validate_semantic_markup(value.get('description'))
+                self._validate_semantic_markup(value.get('returned'))
+                self._validate_semantic_markup_return_values(value.get('contains'))
 
     def _validate_all_semantic_markup(self, docs, return_docs):
         if not isinstance(docs, dict):
@@ -1589,8 +1629,8 @@ class ModuleValidator(Validator):
 
         try:
             if not context:
-                add_fragments(docs, self.object_path, fragment_loader=fragment_loader,
-                              is_module=self.plugin_type == 'module')
+                add_fragments(docs, os.path.abspath(self.object_path), fragment_loader=fragment_loader,
+                              is_module=self.plugin_type == 'module', section='DOCUMENTATION')
         except Exception:
             # Cannot merge fragments
             return
@@ -2186,7 +2226,7 @@ class ModuleValidator(Validator):
         with CaptureStd():
             try:
                 existing_doc, dummy_examples, dummy_return, existing_metadata = get_docstring(
-                    self.base_module, fragment_loader, verbose=True, collection_name=self.collection_name,
+                    os.path.abspath(self.base_module), fragment_loader, verbose=True, collection_name=self.collection_name,
                     is_module=self.plugin_type == 'module')
                 existing_options = existing_doc.get('options', {}) or {}
             except AssertionError:

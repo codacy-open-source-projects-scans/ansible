@@ -1,4 +1,5 @@
 """Miscellaneous utility functions and classes specific to ansible cli tools."""
+
 from __future__ import annotations
 
 import json
@@ -92,6 +93,7 @@ def ansible_environment(args: CommonConfig, color: bool = True, ansible_config: 
 
     ansible = dict(
         ANSIBLE_PYTHON_MODULE_RLIMIT_NOFILE=str(SOFT_RLIMIT_NOFILE),
+        ANSIBLE_INVENTORY_PLUGIN_EXTS='.yaml, .yml, .json, .winrm, .networking',  # allows the yaml/json inventory format for windows and networking
         ANSIBLE_FORCE_COLOR='%s' % 'true' if args.color and color else 'false',
         ANSIBLE_FORCE_HANDLERS='true',  # allow cleanup handlers to run when tests fail
         ANSIBLE_HOST_PATTERN_MISMATCH='error',  # prevent tests from unintentionally passing when hosts are not found
@@ -99,6 +101,7 @@ def ansible_environment(args: CommonConfig, color: bool = True, ansible_config: 
         ANSIBLE_DEPRECATION_WARNINGS='false',
         ANSIBLE_HOST_KEY_CHECKING='false',
         ANSIBLE_RETRY_FILES_ENABLED='false',
+        ANSIBLE_DISPLAY_TRACEBACK=args.display_traceback,
         ANSIBLE_CONFIG=ansible_config,
         ANSIBLE_LIBRARY='/dev/null',
         ANSIBLE_DEVEL_WARNING='false',  # Don't show warnings that CI is running devel
@@ -328,6 +331,6 @@ def run_playbook(
     if args.verbosity:
         cmd.append('-%s' % ('v' * args.verbosity))
 
-    install_requirements(args, args.controller_python, ansible=True)  # run_playbook()
+    install_requirements(args, None, args.controller_python, ansible=True)  # run_playbook()
     env = ansible_environment(args)
     intercept_python(args, args.controller_python, cmd, env, capture=capture)

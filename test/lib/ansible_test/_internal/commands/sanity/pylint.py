@@ -1,4 +1,5 @@
 """Sanity test using pylint."""
+
 from __future__ import annotations
 
 import collections.abc as c
@@ -239,6 +240,7 @@ class PylintTest(SanitySingleVersion):
         # plugin: deprecated (ansible-test)
         if data_context().content.collection:
             plugin_options.update({'--collection-name': data_context().content.collection.full_name})
+            plugin_options.update({'--collection-path': os.path.join(data_context().content.collection.root, data_context().content.collection.directory)})
 
             if collection_detail and collection_detail.version:
                 plugin_options.update({'--collection-version': collection_detail.version})
@@ -298,5 +300,16 @@ class PylintTest(SanitySingleVersion):
             messages = json.loads(stdout)
         else:
             messages = []
+
+        expected_paths = set(paths)
+
+        unexpected_messages = [message for message in messages if message["path"] not in expected_paths]
+        messages = [message for message in messages if message["path"] in expected_paths]
+
+        for unexpected_message in unexpected_messages:
+            display.info(f"Unexpected message: {json.dumps(unexpected_message)}", verbosity=4)
+
+        if unexpected_messages:
+            display.notice(f"Discarded {len(unexpected_messages)} unexpected messages. Use -vvvv to display.")
 
         return messages

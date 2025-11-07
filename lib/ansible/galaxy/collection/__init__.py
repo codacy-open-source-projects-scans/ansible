@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import errno
 import fnmatch
 import functools
 import glob
@@ -31,6 +30,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from io import BytesIO
 from importlib.metadata import distribution
+from importlib.resources import files
 from itertools import chain
 
 try:
@@ -85,7 +85,6 @@ if t.TYPE_CHECKING:
     FilesManifestType = t.Dict[t.Literal['files', 'format'], t.Union[t.List[FileManifestEntryType], int]]
 
 import ansible.constants as C
-from ansible.compat.importlib_resources import files
 from ansible.errors import AnsibleError
 from ansible.galaxy.api import GalaxyAPI
 from ansible.galaxy.collection.concrete_artifact_manager import (
@@ -201,9 +200,9 @@ class CollectionSignatureError(Exception):
 
 # FUTURE: expose actual verify result details for a collection on this object, maybe reimplement as dataclass on py3.8+
 class CollectionVerifyResult:
-    def __init__(self, collection_name):  # type: (str) -> None
-        self.collection_name = collection_name  # type: str
-        self.success = True  # type: bool
+    def __init__(self, collection_name: str) -> None:
+        self.collection_name = collection_name
+        self.success = True
 
 
 def verify_local_collection(local_collection, remote_collection, artifacts_manager):
@@ -340,12 +339,12 @@ def verify_local_collection(local_collection, remote_collection, artifacts_manag
     ]
 
     # Find any paths not in the FILES.json
-    for root, dirs, files in os.walk(b_collection_path):
-        for name in files:
+    for root, dirs, filenames in os.walk(b_collection_path):
+        for name in filenames:
             full_path = os.path.join(root, name)
             path = to_text(full_path[len(b_collection_path) + 1::], errors='surrogate_or_strict')
             if any(fnmatch.fnmatch(full_path, b_pattern) for b_pattern in b_ignore_patterns):
-                display.v("Ignoring verification for %s" % full_path)
+                display.v("Ignoring verification for %s" % to_text(full_path))
                 continue
 
             if full_path not in collection_files:
@@ -624,24 +623,11 @@ def publish_collection(collection_path, api, wait, timeout):
     import_uri = api.publish_collection(collection_path)
 
     if wait:
-        # Galaxy returns a url fragment which differs between v2 and v3.  The second to last entry is
-        # always the task_id, though.
-        # v2: {"task": "https://galaxy-dev.ansible.com/api/v2/collection-imports/35573/"}
-        # v3: {"task": "/api/automation-hub/v3/imports/collections/838d1308-a8f4-402c-95cb-7823f3806cd8/"}
-        task_id = None
-        for path_segment in reversed(import_uri.split('/')):
-            if path_segment:
-                task_id = path_segment
-                break
-
-        if not task_id:
-            raise AnsibleError("Publishing the collection did not return valid task info. Cannot wait for task status. Returned task info: '%s'" % import_uri)
-
         with _display_progress(
                 "Collection has been published to the Galaxy server "
                 "{api.name!s} {api.api_server!s}".format(api=api),
         ):
-            api.wait_import_task(task_id, timeout)
+            api.wait_import_task(import_uri, timeout)
         display.display("Collection has been successfully published and imported to the Galaxy server %s %s"
                         % (api.name, api.api_server))
     else:
@@ -1433,9 +1419,6 @@ def find_existing_collections(path_filter, artifacts_manager, namespace_filter=N
     :param path: Collection dirs layout search path.
     :param artifacts_manager: Artifacts manager.
     """
-    if files is None:
-        raise AnsibleError('importlib_resources is not installed and is required')
-
     if path_filter and not is_sequence(path_filter):
         path_filter = [path_filter]
     if namespace_filter and not is_sequence(namespace_filter):
@@ -1692,11 +1675,7 @@ def _extract_tar_dir(tar, dirname, b_dest):
     b_dir_path = os.path.join(b_dest, to_bytes(dirname, errors='surrogate_or_strict'))
 
     b_parent_path = os.path.dirname(b_dir_path)
-    try:
-        os.makedirs(b_parent_path, mode=S_IRWXU_RXG_RXO)
-    except OSError as e:
-        if e.errno != errno.EEXIST:
-            raise
+    os.makedirs(b_parent_path, mode=S_IRWXU_RXG_RXO, exist_ok=True)
 
     if tar_member.type == tarfile.SYMTYPE:
         b_link_path = to_bytes(tar_member.linkname, errors='surrogate_or_strict')
@@ -1860,10 +1839,13 @@ def _resolve_depenency_map(
         offline=offline,
     )
     try:
-        return collection_dep_resolver.resolve(
-            requested_requirements,
-            max_rounds=2000000,  # NOTE: same constant pip uses
-        ).mapping
+        return t.cast(
+            dict[str, Candidate],
+            collection_dep_resolver.resolve(
+                requested_requirements,
+                max_rounds=2000000,  # NOTE: same constant pip uses
+            ).mapping,
+        )
     except CollectionDependencyResolutionImpossible as dep_exc:
         conflict_causes = (
             '* {req.fqcn!s}:{req.ver!s} ({dep_origin!s})'.format(

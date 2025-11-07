@@ -83,41 +83,9 @@ _raw:
 import ansible.plugins.loader as plugin_loader
 
 from ansible import constants as C
-from ansible.errors import AnsibleError, AnsibleLookupError, AnsibleOptionsError
 from ansible.module_utils.common.sentinel import Sentinel
-from ansible.module_utils.common.text.converters import to_native
-from ansible.module_utils.six import string_types
+from ansible.errors import AnsibleError, AnsibleUndefinedConfigEntry
 from ansible.plugins.lookup import LookupBase
-
-
-def _get_plugin_config(pname, ptype, config, variables):
-    try:
-        # plugin creates settings on load, this is cached so not too expensive to redo
-        loader = getattr(plugin_loader, f'{ptype}_loader')
-        p = loader.get(pname, class_only=True)
-        if p is None:
-            raise AnsibleLookupError(f'Unable to load {ptype} plugin "{pname}"')
-        result, origin = C.config.get_config_value_and_origin(config, plugin_type=ptype, plugin_name=p._load_name, variables=variables)
-    except AnsibleLookupError:
-        raise
-    except AnsibleError as e:
-        msg = to_native(e)
-        if 'was not defined' in msg:
-            raise AnsibleOptionsError(msg) from e
-        raise e
-
-    return result, origin
-
-
-def _get_global_config(config):
-    try:
-        result = getattr(C, config)
-        if callable(result):
-            raise AnsibleLookupError(f'Invalid setting "{config}" attempted')
-    except AttributeError as e:
-        raise AnsibleOptionsError(to_native(e)) from e
-
-    return result
 
 
 class LookupModule(LookupBase):
@@ -132,30 +100,38 @@ class LookupModule(LookupBase):
         show_origin = self.get_option('show_origin')
 
         if (ptype or pname) and not (ptype and pname):
-            raise AnsibleOptionsError('Both plugin_type and plugin_name are required, cannot use one without the other')
+            raise AnsibleError('Both plugin_type and plugin_name are required, cannot use one without the other.')
 
         ret = []
 
         for term in terms:
-            if not isinstance(term, string_types):
-                raise AnsibleOptionsError(f'Invalid setting identifier, "{term}" is not a string, its a {type(term)}')
+            if not isinstance(term, str):
+                raise AnsibleError(f'Invalid setting identifier, {term!r} is not a {str}, its a {type(term)}.')
 
             result = Sentinel
             origin = None
+
+            # plugin creates settings on load, we ensure that happens here
+            if pname:
+                # this is cached so not too expensive
+                loader = getattr(plugin_loader, f'{ptype}_loader')
+                p = loader.get(pname, class_only=True)
+                if p is None:
+                    raise AnsibleError(f"Unable to load {ptype} plugin {pname!r}.")
             try:
-                if pname:
-                    result, origin = _get_plugin_config(pname, ptype, term, variables)
-                else:
-                    result = _get_global_config(term)
-            except AnsibleOptionsError as e:
-                if missing == 'warn':
-                    self._display.warning(f'Skipping, did not find setting {term}')
-                elif missing != 'skip':
-                    raise AnsibleLookupError(f'Unable to find setting {term}: {e}') from e
+                result, origin = C.config.get_config_value_and_origin(term, plugin_type=ptype, plugin_name=pname, variables=variables)
+            except AnsibleUndefinedConfigEntry as e:
+                match missing:
+                    case 'error':
+                        raise
+                    case 'skip':
+                        pass
+                    case 'warn':
+                        self._display.error_as_warning(msg=f"Skipping {term}.", exception=e)
 
             if result is not Sentinel:
                 if show_origin:
-                    ret.append((result, origin))
+                    ret.append([result, origin])
                 else:
                     ret.append(result)
         return ret
