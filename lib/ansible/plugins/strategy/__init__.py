@@ -29,7 +29,6 @@ import typing as t
 import collections.abc as _c
 
 from collections import deque
-from sqlite3 import NotSupportedError
 
 from ansible import constants as C, constants
 from ansible import context
@@ -386,6 +385,8 @@ class StrategyBase:
                 if worker_prc is None or not worker_prc.is_alive():
                     if worker_prc:
                         worker_prc.close()
+
+                    self._blocked_hosts[host.name] = True
                     self._queued_task_cache[(host.name, task._uuid)] = {
                         'host': host,
                         'task': task,
@@ -405,6 +406,7 @@ class StrategyBase:
                         shared_loader_obj=plugin_loader.get_plugin_loader_namespace(),
                         worker_id=self._cur_worker,
                         cliargs=context.CLIARGS,
+                        stacktrace_dir=self._tqm.stacktrace_dir
                     )
                     self._workers[self._cur_worker] = worker_prc
                     self._tqm.send_callback('v2_runner_on_start', host, task)
@@ -685,7 +687,7 @@ class StrategyBase:
                                         for var_name, var_value in variables.items():
                                             self._variable_manager.set_host_variable(target_host, var_name, var_value)
                                 case _:
-                                    raise NotSupportedError(f"Unsupported variable layer: {variable_layer}")
+                                    raise NotImplementedError(f"Unsupported variable layer: {variable_layer}")
 
                     if result_utr.stats is not None:
                         stats_data = result_utr.stats['data']
@@ -1017,10 +1019,12 @@ class StrategyBase:
         else:
             display.vv(f"META: {header}")
 
-        if skipped:
-            self._tqm.send_callback('v2_runner_on_skipped', target_host, task, utr)
+        htr = HostTaskResult(host=target_host, task=task, utr=utr)
 
-        return [HostTaskResult(host=target_host, task=task, utr=utr)]
+        if skipped:
+            self._tqm.send_callback('v2_runner_on_skipped', htr)
+
+        return [htr]
 
     def _get_cached_role(self, task, play):
         return play._get_cached_role(task._role)

@@ -95,8 +95,8 @@ options:
     default: "no"
   exclude:
     description:
-      - Package name(s) to exclude when O(state=present) or O(state=latest). This can be a
-        list or a comma separated string.
+      - Package name(s) to exclude from the operation. This can be a list or a comma separated string.
+      - Works with all O(state) values, including V(absent), V(present), and V(latest).
     type: list
     elements: str
     default: []
@@ -602,7 +602,7 @@ class Dnf5Module(YumDnf):
         conf.installroot = self.installroot
         conf.use_host_config = True  # needed for installroot
         conf.cacheonly = "all" if self.cacheonly else "none"
-        if self.download_dir:
+        if self.download_only and self.download_dir:
             conf.destdir = self.download_dir
 
         if self.enable_plugin:

@@ -14,12 +14,8 @@ import typing as _t
 
 from ansible.module_utils._internal import _datatag, _dataclass_validation
 
-if _sys.version_info >= (3, 10):
-    # Using slots for reduced memory usage and improved performance.
-    _dataclass_kwargs = dict(frozen=True, kw_only=True, slots=True)
-else:
-    # deprecated: description='always use dataclass slots and keyword-only args' python_version='3.9'
-    _dataclass_kwargs = dict(frozen=True)
+# Using slots for reduced memory usage and improved performance.
+_dataclass_kwargs = dict(frozen=True, kw_only=True, slots=True)
 
 
 class PluginType(_datatag.AnsibleSerializableEnum):
@@ -84,6 +80,7 @@ class Event(_datatag.AnsibleSerializableDataclass):
     help_text: _t.Optional[str] = None
     chain: _t.Optional[EventChain] = None
     events: _t.Optional[_t.Tuple[Event, ...]] = None
+    redact_source_context: bool = False
 
 
 _dataclass_validation.inject_post_init_validation(EventChain, EventChain._validation_allow_subclasses)

@@ -83,27 +83,6 @@ class AnsibleUnwantedChecker(BaseChecker):
     )
 
     unwanted_imports = {
-        # see https://docs.python.org/3/library/collections.abc.html
-        # deprecated: description='remove collections check now that Python 3.9 is no longer supported' core_version='2.23'
-        'collections': UnwantedEntry(
-            'collections.abc',
-            names=(
-                'MappingView',
-                'ItemsView',
-                'KeysView',
-                'ValuesView',
-                'Mapping', 'MutableMapping',
-                'Sequence', 'MutableSequence',
-                'Set', 'MutableSet',
-                'Container',
-                'Hashable',
-                'Sized',
-                'Callable',
-                'Iterable',
-                'Iterator',
-            )
-        ),
-
         'ansible.module_utils.six': UnwantedEntry(
             'the Python standard library equivalent'
         ),
@@ -127,6 +106,15 @@ class AnsibleUnwantedChecker(BaseChecker):
                                             '/lib/ansible/module_utils/basic.py',
                                         ),
                                         modules_only=True),
+
+        # deprecated: description='remove this entire AnsibleActionSkip entry when the exception is removed' core_version='2.25'
+        'ansible.errors.AnsibleActionSkip': UnwantedEntry(
+            'AnsibleActionNoCheckMode if the desired skip is for lacking check_mode, otherwise returning `skipped` from actions is deprecated.',
+            ignore_paths=(
+                # deprecated: description='remove ignore when action/__init__.py switches to AnsibleActionNoCheckMode' core_version='2.25'
+                '/lib/ansible/plugins/action/__init__.py',
+            ),
+        ),
     }
 
     for method in (

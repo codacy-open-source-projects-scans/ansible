@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import builtins
 import collections.abc as c
 import copy
 import dataclasses
@@ -11,7 +10,6 @@ import json
 
 import unittest.mock
 import pickle
-import sys
 
 import pytest
 
@@ -46,11 +44,7 @@ from ansible.module_utils._internal._datatag import (
 from ansible.module_utils._internal._datatag._tags import Deprecated
 from ansible.module_utils.datatag import native_type_name
 
-if sys.version_info >= (3, 9):
-    from typing import get_type_hints
-else:
-    # 3.8 needs the typing_extensions version of get_type_hints for `include_extras`
-    from typing_extensions import get_type_hints
+from typing import get_type_hints
 
 
 @dataclasses.dataclass(**_tag_dataclass_kwargs)
@@ -93,6 +87,9 @@ message_instances = [
 def assert_round_trip(original_value, round_tripped_value, via_copy=False):
     assert original_value == round_tripped_value
     assert AnsibleTagHelper.tags(original_value) == AnsibleTagHelper.tags(round_tripped_value)
+
+    if isinstance(original_value, (datetime.datetime, datetime.time)) and isinstance(round_tripped_value, (datetime.datetime, datetime.time)):
+        assert original_value.fold == round_tripped_value.fold  # fold isn't included in equality, so we have to check it explicitly
 
     if via_copy and type(original_value) is tuple:  # pylint: disable=unidiomatic-typecheck
         # copy.copy/copy.deepcopy significantly complicate the rules for reference equality with tuple, skip the following checks for values sourced that way
@@ -265,12 +262,6 @@ def _default_id_func(obj: object) -> str:
     return res
 
 
-if sys.version_info < (3, 10):
-    # deprecated: description='ditch zip(strict) polyfill' python_version='3.10'
-    def zip(*args, **_kwargs):
-        return builtins.zip(*args)
-
-
 @dataclasses.dataclass(frozen=True)
 class ParamDesc:
     names: t.List[str]
@@ -376,9 +367,9 @@ class TestDatatagTarget(AutoParamSupport):
         42.0,
         42,
         "hi mom",
-        datetime.datetime(2023, 9, 15, 21, 5, 30, 1900, datetime.timezone.utc),
+        datetime.datetime(2023, 9, 15, 21, 5, 30, 1900, datetime.timezone.utc, fold=1),
         datetime.date(2023, 9, 15),
-        datetime.time(21, 5, 30, 1900),
+        datetime.time(21, 5, 30, 1900, fold=1),
     ]
 
     tagged_object_instances: t.List[AnsibleTaggedObject] = [
@@ -654,7 +645,7 @@ class TestDatatagTarget(AutoParamSupport):
             expect_slots = False
         elif issubclass(value, AnsibleSerializableDataclass) or value == AnsibleSerializableDataclass:
             assert dataclasses.is_dataclass(value)  # everything extending AnsibleSerializableDataclass must be a dataclass
-            expect_slots = sys.version_info >= (3, 10)  # 3.10+ dataclasses have attributes (and support slots)
+            expect_slots = True  # dataclasses have attributes (and support slots)
         else:
             expect_slots = True  # normal types have attributes (and slots)
 

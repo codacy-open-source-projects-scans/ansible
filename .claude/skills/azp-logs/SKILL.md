@@ -1,7 +1,9 @@
 ---
+name: azp-logs
 description: Download Azure Pipelines CI logs for analysis
 argument-hint: <pr_number|build_id|build_url>
 allowed-tools: [Bash(gh pr view:*), Bash(gh pr checks:*), Bash(ls:*), Read, Grep]
+user-invocable: true
 ---
 
 Azure Pipelines Logs Downloader
@@ -32,6 +34,7 @@ Implementation
 This command uses the existing `hacking/azp/download.py` script to download CI logs.
 
 **Before running**: Always confirm with the user before downloading logs. Inform them that:
+
 - The download may take 5-10 minutes for a full CI run (potentially longer for very large runs)
 - Logs will be saved to a directory named after the build ID
 - The download size can be 10-50MB depending on the number of jobs
@@ -61,6 +64,7 @@ Download Script Options
 -----------------------
 
 The `hacking/azp/download.py` script supports:
+
 - `--console-logs`: Download console logs (recommended for CI failure analysis)
 - `--artifacts`: Download test artifacts
 - `--run-metadata`: Download run metadata JSON

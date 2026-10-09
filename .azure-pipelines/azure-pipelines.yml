@@ -31,7 +31,7 @@ variables:
   - name: fetchDepth
     value: 500
   - name: defaultContainer
-    value: quay.io/ansible/azure-pipelines-test-container:7.0.0
+    value: quay.io/ansible/azure-pipelines-test-container:8.0.0
 
 pool: Standard
 
@@ -54,7 +54,6 @@ stages:
           nameFormat: Python {0}
           testFormat: units/{0}
           targets:
-            - test: 3.9
             - test: '3.10'
             - test: 3.11
             - test: 3.12
@@ -95,16 +94,16 @@ stages:
           targets:
             - name: macOS 26.3
               test: macos/26.3
-            - name: RHEL 9.7 py39
-              test: rhel/9.7@3.9
-            - name: RHEL 9.7 py312
-              test: rhel/9.7@3.12
-            - name: RHEL 10.1
-              test: rhel/10.1
-            - name: FreeBSD 14.4
-              test: freebsd/14.4
-            - name: FreeBSD 15.0
-              test: freebsd/15.0
+            - name: RHEL 9.8
+              test: rhel/9.8
+            - name: RHEL 10.2 py312
+              test: rhel/10.2@3.12
+            - name: RHEL 10.2 py314
+              test: rhel/10.2@3.14
+            - name: FreeBSD 14.5
+              test: freebsd/14.5
+            - name: FreeBSD 15.1
+              test: freebsd/15.1
           groups:
             - 1
             - 2
@@ -113,14 +112,14 @@ stages:
           targets:
             - name: macOS 26.3
               test: macos/26.3
-            - name: RHEL 9.7
-              test: rhel/9.7
-            - name: RHEL 10.1
-              test: rhel/10.1
-            - name: FreeBSD 14.4
-              test: freebsd/14.4
-            - name: FreeBSD 15.0
-              test: freebsd/15.0
+            - name: RHEL 9.8
+              test: rhel/9.8
+            - name: RHEL 10.2
+              test: rhel/10.2
+            - name: FreeBSD 14.5
+              test: freebsd/14.5
+            - name: FreeBSD 15.1
+              test: freebsd/15.1
           groups:
             - 3
             - 4
@@ -128,16 +127,16 @@ stages:
       - template: templates/matrix.yml  # context/controller (ansible-test container management)
         parameters:
           targets:
-            - name: Alpine 3.23
-              test: alpine/3.23
+            - name: Alpine 3.24
+              test: alpine/3.24
             - name: Fedora 44
               test: fedora/44
-            - name: RHEL 9.7
-              test: rhel/9.7
-            - name: RHEL 10.1
-              test: rhel/10.1
-            - name: Ubuntu 24.04
-              test: ubuntu/24.04
+            - name: RHEL 9.8
+              test: rhel/9.8
+            - name: RHEL 10.2
+              test: rhel/10.2
+            - name: Ubuntu 26.04
+              test: ubuntu/26.04
           groups:
             - 6
   - stage: Remote_Targeted
@@ -157,14 +156,14 @@ stages:
         parameters:
           testFormat: linux/{0}
           targets:
-            - name: Alpine 3.23
-              test: alpine323
+            - name: Alpine 3.24
+              test: alpine324
             - name: Fedora 44
               test: fedora44
-            - name: Ubuntu 22.04
-              test: ubuntu2204
             - name: Ubuntu 24.04
               test: ubuntu2404
+            - name: Ubuntu 26.04
+              test: ubuntu2604
           groups:
             - 1
             - 2
@@ -172,12 +171,14 @@ stages:
         parameters:
           testFormat: linux/{0}
           targets:
-            - name: Alpine 3.23
-              test: alpine323
+            - name: Alpine 3.24
+              test: alpine324
             - name: Fedora 44
               test: fedora44
             - name: Ubuntu 24.04
               test: ubuntu2404
+            - name: Ubuntu 26.04
+              test: ubuntu2604
           groups:
             - 3
             - 4
@@ -207,7 +208,6 @@ stages:
           nameFormat: Python {0}
           testFormat: galaxy/{0}/1
           targets:
-            - test: 3.12
             - test: 3.13
             - test: 3.14
             - test: 3.15
@@ -219,7 +219,6 @@ stages:
           nameFormat: Python {0}
           testFormat: generic/{0}/1
           targets:
-            - test: 3.12
             - test: 3.13
             - test: 3.14
             - test: 3.15

@@ -62,6 +62,7 @@ from ansible.module_utils.common.validation import (
     check_type_raw,
     check_type_str,
 )
+from ansible.module_utils.common.warnings import deprecate as _deprecate
 
 # Python2 & 3 way to get NoneType
 NoneType = type(None)
@@ -493,14 +494,14 @@ def _set_defaults(argument_spec, parameters, set_default=True):
         if param not in parameters and (default is not None or set_default):
             # Make sure any default value for no_log fields are masked.
             if value.get('no_log', False) and default:
-                no_log_values.add(default)
+                no_log_values.update(_return_datastructure_name(default))
 
             parameters[param] = default
 
     return no_log_values
 
 
-def _sanitize_keys_conditions(value, no_log_strings, ignore_keys, deferred_removals):
+def _sanitize_keys_conditions(value, deferred_removals):
     """ Helper method to :func:`sanitize_keys` to build ``deferred_removals`` and avoid deep recursion. """
     if isinstance(value, (str, bytes)):
         return value
@@ -846,7 +847,7 @@ def set_fallbacks(argument_spec, parameters):
                 continue
             else:
                 if value.get('no_log', False) and fallback_value:
-                    no_log_values.add(fallback_value)
+                    no_log_values.update(_return_datastructure_name(fallback_value))
                 parameters[param] = fallback_value
 
     return no_log_values
@@ -865,11 +866,18 @@ def sanitize_keys(obj, no_log_strings, ignore_keys=frozenset()):
 
     :returns: An object with sanitized keys.
     """
+    # TODO remove helper functions when removing this function
+    _deprecate(
+        msg="The `sanitize_keys()` function from `ansible.module_utils.common.parameters` is deprecated.",
+        version="2.25",
+        help_text="Secret values are now masked automatically. Use functions from `ansible.module_utils.secrets` if you need to handle secrets manually.",
+    )
 
     deferred_removals = deque()
 
-    no_log_strings = [to_native(s, errors='surrogate_or_strict') for s in no_log_strings]
-    new_value = _sanitize_keys_conditions(obj, no_log_strings, ignore_keys, deferred_removals)
+    # sort ensuring we always handle longer strings vs subsets
+    no_log_strings = sorted([to_native(s, errors='surrogate_or_strict') for s in no_log_strings], key=len, reverse=True)
+    new_value = _sanitize_keys_conditions(obj, deferred_removals)
 
     while deferred_removals:
         old_data, new_data = deferred_removals.popleft()
@@ -877,15 +885,15 @@ def sanitize_keys(obj, no_log_strings, ignore_keys=frozenset()):
         if isinstance(new_data, Mapping):
             for old_key, old_elem in old_data.items():
                 if old_key in ignore_keys or old_key.startswith('_ansible'):
-                    new_data[old_key] = _sanitize_keys_conditions(old_elem, no_log_strings, ignore_keys, deferred_removals)
+                    new_data[old_key] = _sanitize_keys_conditions(old_elem, deferred_removals)
                 else:
                     # Sanitize the old key. We take advantage of the sanitizing code in
                     # _remove_values_conditions() rather than recreating it here.
                     new_key = _remove_values_conditions(old_key, no_log_strings, None)
-                    new_data[new_key] = _sanitize_keys_conditions(old_elem, no_log_strings, ignore_keys, deferred_removals)
+                    new_data[new_key] = _sanitize_keys_conditions(old_elem, deferred_removals)
         else:
             for elem in old_data:
-                new_elem = _sanitize_keys_conditions(elem, no_log_strings, ignore_keys, deferred_removals)
+                new_elem = _sanitize_keys_conditions(elem, deferred_removals)
                 if isinstance(new_data, MutableSequence):
                     new_data.append(new_elem)
                 elif isinstance(new_data, MutableSet):
@@ -905,10 +913,17 @@ def remove_values(value, no_log_strings):
     because of the potential to hit the maximum recursion depth when dealing with
     large amounts of data (see `issue #24560 <https://github.com/ansible/ansible/issues/24560>`_).
     """
+    # TODO remove helper functions when removing this function
+    _deprecate(
+        msg="The `remove_values()` function from `ansible.module_utils.common.parameters` is deprecated.",
+        version="2.25",
+        help_text="Secret values are now masked automatically. Use functions from `ansible.module_utils.secrets` if you need to handle secrets manually.",
+    )
 
     deferred_removals = deque()
 
-    no_log_strings = [to_native(s, errors='surrogate_or_strict') for s in no_log_strings]
+    # sort ensuring we always handle longer strings vs subsets
+    no_log_strings = sorted([to_native(s, errors='surrogate_or_strict') for s in no_log_strings], key=len, reverse=True)
     new_value = _remove_values_conditions(value, no_log_strings, deferred_removals)
 
     while deferred_removals:

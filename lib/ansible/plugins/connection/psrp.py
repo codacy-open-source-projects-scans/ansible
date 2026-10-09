@@ -45,6 +45,7 @@ options:
     - name: ansible_winrm_password
     aliases:
     - password  # Needed for --ask-pass to come through on delegation
+    secret: true
   port:
     description:
     - The port for PSRP to connect on the remote target.
@@ -208,6 +209,7 @@ options:
     - The password for the O(certificate_key_pem) key file if it is encrypted.
     - This option requires pypsrp >= 0.9.0 to be installed.
     type: str
+    secret: true
     vars:
     - name: ansible_psrp_certificate_key_password
     version_added: '2.21'
@@ -766,9 +768,17 @@ class Connection(ConnectionBase):
             stderr_list += self.host.ui.stderr
         stderr = "".join([to_text(o) for o in stderr_list])
 
+        log_stdout = stdout
+        log_stderr = stderr
+        if self._play_context.no_log:
+            log_stdout = log_stderr = '<censored due to no log>'
+
         display.vvvvv("PSRP RC: %d" % rc, host=self._psrp_host)
-        display.vvvvv("PSRP STDOUT: %s" % stdout, host=self._psrp_host)
-        display.vvvvv("PSRP STDERR: %s" % stderr, host=self._psrp_host)
+        # The raw output is only shown under ANSIBLE_DEBUG. Module output may contain secrets which are not
+        # registered with the secret masker until the result has been parsed by the action plugin, so displaying
+        # the raw output here at a normal verbosity level could leak them.
+        display.debug(f"PSRP STDOUT: {log_stdout}")
+        display.debug(f"PSRP STDERR: {log_stderr}")
 
         # reset the host back output back to defaults, needed if running
         # multiple pipelines on the same RunspacePool
